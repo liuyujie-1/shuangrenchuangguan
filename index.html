@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>双人迷宫 | 出局玩法版</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+        body { width: 100vw; height: 100vh; overflow: hidden; background: #000; }
+        #canvas { position: absolute; top: 0; left: 0; background: #f8f8f8; }
+        /* 顶部容器：幽灵设置 + 游戏说明 同一行 */
+        .top-bar {
+            position: fixed;
+            top: 10px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            z-index: 15;
+        }
+        .setting {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .setting input { width: 60px; padding: 6px 10px; border: none; border-radius: 20px; text-align: center; font-size: 14px; }
+        .setting button { padding: 6px 12px; border: none; border-radius: 20px; background: #4285f4; color: #fff; cursor: pointer; font-size: 14px; }
+        /* 游戏说明样式 */
+        .game-tips {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .game-tips span {
+            color: #fff;
+            background: rgba(0,0,0,0.8);
+            padding: 6px 12px;
+            border-radius: 20px;
+            margin: 0;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+        /* 出局提示：自动消失 */
+        .outTip { 
+            position: fixed; 
+            top: 60px; 
+            left: 50%; 
+            transform: translateX(-50%); 
+            z-index: 12; 
+            color: #ff4444; 
+            background: rgba(0,0,0,0.9); 
+            padding: 8px 20px; 
+            border-radius: 20px; 
+            font-size: 16px; 
+            display: none; 
+            transition: opacity 0.5s ease;
+        }
+        .btn { 
+            position: fixed; 
+            bottom: 10px; 
+            left: 50%; 
+            transform: translateX(-50%); 
+            z-index: 10; 
+            display: flex;
+            gap: 10px;
+        }
+        .btn button { 
+            padding: 8px 16px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            color: #fff; 
+            font-weight: bold; 
+        }
+        .reset { background: #fbbc05; }
+        .pause { background: #ea4335; }
+        .warning { 
+            position: fixed; 
+            top: 50%; 
+            left: 50%; 
+            transform: translate(-50%, -50%); 
+            background: rgba(0,0,0,0.9); 
+            color: #ff4444; 
+            padding: 15px 30px; 
+            border-radius: 10px; 
+            font-size: 20px; 
+            display: none; 
+            z-index: 20; 
+        }
+        .modal { 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            background: rgba(0,0,0,0.9); 
+            display: none; 
+            align-items: center; 
+            justify-content: center; 
+            z-index: 30; 
+        }
+        .modal-box { 
+            background: #fff; 
+            padding: 40px; 
+            border-radius: 15px; 
+            text-align: center; 
+        }
+        .modal-box h2 { margin-bottom: 20px; color: #333; }
+        .modal-box button { 
+            padding: 10px 25px; 
+            border: none; 
+            background: #4285f4; 
+            color: #fff; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px; 
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部容器：幽灵设置 + 游戏说明 同一行 -->
+    <div class="top-bar">
+        <div class="setting">
+            <span style="color:#fff; background:rgba(0,0,0,0.8); padding:6px 12px; border-radius:20px;">幽灵数量：</span>
+            <input type="number" id="enemyNum" value="3" min="0" max="40" step="1">
+            <button onclick="setEnemyNum()">确认设置</button>
+        </div>
+        <div class="game-tips">
+            <span>玩家1：WASD | 玩家2：↑↓←→</span>
+            <span>碰幽灵出局 | 剩余玩家到出口获胜</span>
+        </div>
+    </div>
+
+    <div class="outTip" id="outTip">玩家1已出局！玩家2继续闯关</div>
+
+    <div class="btn">
+        <button class="reset" onclick="resetGame()">重新开始</button>
+        <button class="pause" onclick="togglePause()">暂停/继续</button>
+    </div>
+    <div class="warning" id="warn">碰到幽灵，直接出局！</div>
+    <div class="modal" id="winModal">
+        <div class="modal-box">
+            <h2 id="winText">玩家1获胜！🎉</h2>
+            <button onclick="closeModal()">再来一局</button>
+        </div>
+    </div>
+    <div class="modal" id="failModal">
+        <div class="modal-box">
+            <h2>两人全部出局，游戏失败😱</h2>
+            <button onclick="closeModal()">重新开始</button>
+        </div>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const config = {
+            cell: 30,
+            playerSpeed: 0.06,
+            enemySpeed: 0.02,
+            enemyChange: 0.015,
+            size: { player: 20, enemy: 18 },
+            enemyCount: 3
+        };
+
+        let canvas, ctx, w, h, rows, cols;
+        let maze = [];
+        let players = [
+            { x: 2, y: 2, color: '#4285f4', up: false, down: false, left: false, right: false, out: false },
+            { x: 3, y: 2, color: '#ea4335', up: false, down: false, left: false, right: false, out: false }
+        ];
+        let enemies = [];
+        let exit = { x: 0, y: 0 };
+        let isPaused = false;
+        // 新增：出局提示定时器
+        let outTipTimer = null;
+
+        window.onload = init;
+
+        function init() {
+            canvas = document.getElementById('canvas');
+            ctx = canvas.getContext('2d');
+            resizeCanvas();
+            generateMaze();
+            initEnemies();
+            bindKeys();
+            gameLoop();
+            window.addEventListener('resize', resizeCanvas);
+        }
+
+        function resizeCanvas() {
+            w = window.innerWidth;
+            h = window.innerHeight;
+            canvas.width = w;
+            canvas.height = h;
+            rows = Math.floor(h / config.cell);
+            cols = Math.floor(w / config.cell);
+            exit.x = Math.floor(cols - 3.5);
+            exit.y = Math.floor(rows - 3.5);
+        }
+
+        function generateMaze() {
+            maze = Array(rows).fill().map(() => Array(cols).fill(1));
+            const startX = Math.floor(Math.random() * (cols - 4)) + 2;
+            const startY = Math.floor(Math.random() * (rows - 4)) + 2;
+            const stack = [{ x: startX % 2 === 0 ? startX : startX + 1, y: startY % 2 === 0 ? startY : startY + 1 }];
+            maze[stack[0].y][stack[0].x] = 0;
+            const dirs = [{ dx: 0, dy: -2 }, { dx: 2, dy: 0 }, { dx: 0, dy: 2 }, { dx: -2, dy: 0 }];
+            
+            while (stack.length) {
+                const curr = stack.pop();
+                const shuffled = [...dirs].sort(() => Math.random() - Math.random());
+                shuffled.forEach(d => {
+                    const x = curr.x + d.dx;
+                    const y = curr.y + d.dy;
+                    if (x > 0 && x < cols && y > 0 && y < rows && maze[y][x] === 1) {
+                        maze[y][x] = 0;
+                        maze[curr.y + d.dy/2][curr.x + d.dx/2] = 0;
+                        stack.push(curr);
+                        stack.push({ x, y });
+                    }
+                });
+            }
+            maze[exit.y][exit.x] = 0;
+            maze[exit.y+1][exit.x] = 0;
+            maze[exit.y][exit.x+1] = 0;
+            maze[exit.y-1][exit.x] = 0;
+            maze[exit.y][exit.x-1] = 0;
+        }
+
+        function initEnemies() {
+            enemies = [];
+            if (config.enemyCount === 0) return;
+            
+            const dirs = [{ x: -1, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }];
+            for (let i = 0; i < config.enemyCount; i++) {
+                let x, y;
+                do {
+                    x = Math.floor(Math.random() * (cols-6)) + 3;
+                    y = Math.floor(Math.random() * (rows-6)) + 3;
+                } while (maze[y][x] === 1 || 
+                         getDist(x, y, players[0].x, players[0].y) < 6 || 
+                         getDist(x, y, players[1].x, players[1].y) < 6 ||
+                         getDist(x, y, exit.x, exit.y) < 9 ||
+                         enemies.some(e => getDist(x, y, e.x, e.y) < 4));
+                const dir = dirs[Math.floor(Math.random() * 4)];
+                enemies.push({ x, y, dirX: dir.x, dirY: dir.y });
+            }
+        }
+
+        function setEnemyNum() {
+            const input = document.getElementById('enemyNum');
+            let num = parseInt(input.value);
+            if (isNaN(num) || num < 0) num = 0;
+            if (num > 40) num = 40;
+            input.value = num;
+            config.enemyCount = num;
+            initEnemies();
+            alert(`已设置幽灵数量为：${num}个`);
+        }
+
+        function bindKeys() {
+            document.addEventListener('keydown', e => {
+                e.preventDefault();
+                if (!players[0].out) {
+                    if (e.key === 'w' || e.key === 'W') players[0].up = true;
+                    if (e.key === 'a' || e.key === 'A') players[0].left = true;
+                    if (e.key === 's' || e.key === 'S') players[0].down = true;
+                    if (e.key === 'd' || e.key === 'D') players[0].right = true;
+                }
+                if (!players[1].out) {
+                    if (e.key === 'ArrowUp') players[1].up = true;
+                    if (e.key === 'ArrowLeft') players[1].left = true;
+                    if (e.key === 'ArrowDown') players[1].down = true;
+                    if (e.key === 'ArrowRight') players[1].right = true;
+                }
+            });
+            document.addEventListener('keyup', e => {
+                e.preventDefault();
+                if (!players[0].out) {
+                    if (e.key === 'w' || e.key === 'W') players[0].up = false;
+                    if (e.key === 'a' || e.key === 'A') players[0].left = false;
+                    if (e.key === 's' || e.key === 'S') players[0].down = false;
+                    if (e.key === 'd' || e.key === 'D') players[0].right = false;
+                }
+                if (!players[1].out) {
+                    if (e.key === 'ArrowUp') players[1].up = false;
+                    if (e.key === 'ArrowLeft') players[1].left = false;
+                    if (e.key === 'ArrowDown') players[1].down = false;
+                    if (e.key === 'ArrowRight') players[1].right = false;
+                }
+            });
+        }
+
+        function gameLoop() {
+            if (!isPaused) {
+                update();
+                draw();
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        function update() {
+            if (!players[0].out) updatePlayer(0);
+            if (!players[1].out) updatePlayer(1);
+            updateEnemies();
+            checkOut();
+            checkWin();
+        }
+
+        function updatePlayer(idx) {
+            const p = players[idx];
+            let dx = 0, dy = 0;
+            if (p.up) dy -= config.playerSpeed;
+            if (p.down) dy += config.playerSpeed;
+            if (p.left) dx -= config.playerSpeed;
+            if (p.right) dx += config.playerSpeed;
+            const nx = p.x + dx;
+            const ny = p.y + dy;
+            if (!isWall(nx, ny) && nx > 0.5 && ny > 0.5 && nx < cols - 0.5 && ny < rows - 0.5) {
+                p.x = nx;
+                p.y = ny;
+            }
+        }
+
+        function updateEnemies() {
+            if (config.enemyCount === 0) return;
+            
+            const dirs = [{ x: -1, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }];
+            enemies.forEach(en => {
+                if (Math.random() < config.enemyChange) {
+                    const newDir = dirs[Math.floor(Math.random() * 4)];
+                    en.dirX = newDir.x;
+                    en.dirY = newDir.y;
+                }
+                const nx = en.x + en.dirX * config.enemySpeed;
+                const ny = en.y + en.dirY * config.enemySpeed;
+                if (isWall(nx, ny) || nx < 2 || nx > cols-3 || ny < 2 || ny > rows-3) {
+                    const newDir = dirs[Math.floor(Math.random() * 4)];
+                    en.dirX = newDir.x;
+                    en.dirY = newDir.y;
+                    return;
+                }
+                let canMove = true;
+                enemies.forEach(e => {
+                    if (e !== en && getDist(nx, ny, e.x, e.y) < 2) canMove = false;
+                });
+                if (canMove) {
+                    en.x = nx;
+                    en.y = ny;
+                }
+            });
+        }
+
+        function isWall(x, y) {
+            return maze[Math.floor(y)][Math.floor(x)] === 1;
+        }
+
+        function checkOut() {
+            if (config.enemyCount === 0) return;
+            
+            players.forEach((p, idx) => {
+                if (!p.out) {
+                    enemies.forEach(en => {
+                        if (getDist(p.x, p.y, en.x, en.y) < config.size.player / config.cell) {
+                            p.out = true;
+                            document.getElementById('warn').style.display = 'block';
+                            // 显示出局提示
+                            const outTip = document.getElementById('outTip');
+                            outTip.innerText = `玩家${idx+1}已出局！玩家${idx===0 ? 2 : 1}继续闯关`;
+                            outTip.style.display = 'block';
+                            // 清除之前的定时器，避免叠加
+                            if (outTipTimer) clearTimeout(outTipTimer);
+                            // 3秒后隐藏出局提示（可改时间，比如5000=5秒）
+                            outTipTimer = setTimeout(() => {
+                                outTip.style.display = 'none';
+                            }, 3000);
+                            // 1.5秒后隐藏碰幽灵提示
+                            setTimeout(() => {
+                                document.getElementById('warn').style.display = 'none';
+                            }, 1500);
+                        }
+                    });
+                }
+            });
+            if (players[0].out && players[1].out) {
+                document.getElementById('outTip').style.display = 'none';
+                document.getElementById('failModal').style.display = 'flex';
+                isPaused = true;
+            }
+        }
+
+        function checkWin() {
+            players.forEach((p, idx) => {
+                if (!p.out) {
+                    if (getDist(p.x, p.y, exit.x, exit.y) < 1.5) {
+                        document.getElementById('outTip').style.display = 'none';
+                        document.getElementById('winText').innerText = `玩家${idx+1}获胜！🎉`;
+                        document.getElementById('winModal').style.display = 'flex';
+                        isPaused = true;
+                    }
+                }
+            });
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, w, h);
+            drawMaze();
+            drawExit();
+            drawPlayer(0);
+            drawPlayer(1);
+            drawEnemies();
+        }
+
+        function drawMaze() {
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    ctx.fillStyle = maze[y][x] === 1 ? '#333' : '#f8f8f8';
+                    ctx.fillRect(x * config.cell, y * config.cell, config.cell, config.cell);
+                }
+            }
+        }
+
+        function drawExit() {
+            const x = exit.x * config.cell + config.cell/2;
+            const y = exit.y * config.cell + config.cell/2;
+            const s = config.cell;
+            ctx.fillStyle = '#FFD700';
+            ctx.fillRect(x - s/2, y - s/2, 8, s);
+            ctx.fillRect(x + s/2 - 8, y - s/2, 8, s);
+            ctx.strokeStyle = '#FFD700';
+            ctx.lineWidth = 8;
+            ctx.beginPath();
+            ctx.arc(x, y + s/4, s/2, 0, Math.PI);
+            ctx.stroke();
+            ctx.fillStyle = '#FF0000';
+            ctx.beginPath();
+            ctx.moveTo(x, y - s/2);
+            ctx.lineTo(x + 20, y - s/2 - 10);
+            ctx.lineTo(x + 20, y - s/2 - 25);
+            ctx.lineTo(x, y - s/2 - 15);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawPlayer(idx) {
+            const p = players[idx];
+            const x = p.x * config.cell;
+            const y = p.y * config.cell;
+            const s = config.size.player;
+            ctx.fillStyle = p.out ? 'rgba(66,133,244,0.4)' : p.color;
+            ctx.beginPath();
+            ctx.arc(x, y - s/2, s/2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillRect(x - s/4, y, s/2, s);
+            ctx.fillStyle = p.out ? 'rgba(255,255,255,0.4)' : '#fff';
+            ctx.beginPath();
+            ctx.arc(x - s/6, y - s/2, s/8, 0, Math.PI * 2);
+            ctx.arc(x + s/6, y - s/2, s/8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawEnemies() {
+            if (config.enemyCount === 0) return;
+            
+            enemies.forEach((en, idx) => {
+                const x = en.x * config.cell;
+                const y = en.y * config.cell + Math.sin(Date.now()/500 + idx) * 3;
+                const s = config.size.enemy;
+                ctx.fillStyle = 'rgba(156, 39, 176, 0.8)';
+                ctx.beginPath();
+                ctx.arc(x, y - s/2, s/2, 0, Math.PI);
+                ctx.lineTo(x - s/2, y - s/2);
+                for (let i = 0; i < 6; i++) {
+                    const waveY = y - s/2 + Math.sin(i * Math.PI/3 + Date.now()/300) * 2;
+                    ctx.lineTo(x - s/2 + i * s/6, waveY);
+                }
+                ctx.lineTo(x + s/2, y - s/2);
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(x - s/6, y - s/2, s/8, 0, Math.PI * 2);
+                ctx.arc(x + s/6, y - s/2, s/8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(x - s/6 + en.dirX*2, y - s/2 + en.dirY*2, s/16, 0, Math.PI * 2);
+                ctx.arc(x + s/6 + en.dirX*2, y - s/2 + en.dirY*2, s/16, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function getDist(x1, y1, x2, y2) {
+            return Math.hypot(x1 - x2, y1 - y2);
+        }
+
+        function resetGame() {
+            isPaused = false;
+            players = [
+                { x: 2, y: 2, color: '#4285f4', up: false, down: false, left: false, right: false, out: false },
+                { x: 3, y: 2, color: '#ea4335', up: false, down: false, left: false, right: false, out: false }
+            ];
+            document.getElementById('warn').style.display = 'none';
+            document.getElementById('outTip').style.display = 'none';
+            document.getElementById('winModal').style.display = 'none';
+            document.getElementById('failModal').style.display = 'none';
+            // 清除定时器
+            if (outTipTimer) clearTimeout(outTipTimer);
+            generateMaze();
+            initEnemies();
+        }
+
+        function togglePause() {
+            isPaused = !isPaused;
+        }
+
+        function closeModal() {
+            resetGame();
+        }
+    </script>
+</body>
+</html>
